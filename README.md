@@ -1,0 +1,72 @@
+# No Phones
+
+A webcam app that beeps and flashes the screen when you pick up your phone while working.
+
+## How it works
+
+- YOLO detects the phone.
+- MediaPipe tracks your hands.
+- A gradient-boosted model combines both into an "on the phone" score for each frame.
+- An alert fires after 5 seconds on the phone. Typing cancels it.
+
+## Setup
+
+Windows, Python 3.12, NVIDIA GPU.
+
+```
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+curl.exe -L --create-dirs -o models/hand_landmarker.task https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task
+```
+
+The YOLO weights download automatically on first run.
+
+## Train it on your desk
+
+The model learns one person, one desk and one camera angle. Fix the camera in place first and don't move it.
+
+1. Record at least 4 sessions on different days, with a new seed each time (about 6 minutes each):
+   ```
+   python src/record.py --seed 1
+   ```
+2. Train and evaluate the model:
+   ```
+   python src/train.py
+   ```
+3. Tune the alerts:
+   ```
+   python src/tune_alerts.py --trigger 5
+   ```
+   `--trigger` is how many seconds on your phone before it alerts. Lower is faster but gives more false alarms.
+
+Also useful:
+- `python src/preview.py` shows what the camera sees while you aim it
+- `python src/analyze_session.py` checks a recorded session for problems
+- `python src/test_live.py` runs the tests
+
+## Run
+
+```
+python src/monitor.py
+```
+
+- `q` quits, `f` marks the last alert as a false alarm
+- `--headless` runs without a window
+- `--no-sound` / `--no-flash` turn off either alert
+
+## Results
+
+Measured on sessions the model never trained on (4 sessions, about 30,000 frames):
+
+- YOLO confidence alone: AUC 0.79
+- YOLO + hands model: AUC 0.97
+- Alerts at 5 seconds: 12 of 12 phone episodes caught, median 5 s, 1 false alarm in 11 minutes of work
+
+Full tables are in `results/metrics.md` and `results/alerts.md`.
+
+## Privacy
+
+- Monitoring saves only `data/focus_log.csv` (alert times).
+- Recording saves features and a few snapshot images to `data/sessions/`. Keep that folder private.
+- The keyboard listener counts key presses and never records which key.

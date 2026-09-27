@@ -1,0 +1,7 @@
+cd to root directory
+cd "C:\Users\jkatd\Desktop\no phones"
+
+load .venv
+.\.venv\scripts\activate.ps1
+
+or run src/shell.bat

@@ -1,0 +1,16 @@
+# Virtual environment (3.7 GB, machine-specific) - rebuild from requirements.txt
+.venv/
+__pycache__/
+
+# Model weights - too big for GitHub, downloaded during setup
+*.pt
+*.task
+
+# Your recordings, snapshot photos and focus log
+data/
+
+# Trained on your data - rebuilt by train.py and tune_alerts.py
+models/
+
+# Per-frame predictions - rebuilt by train.py
+results/oof.csv

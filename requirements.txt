@@ -1,0 +1,25 @@
+# Rebuild this environment with:
+#   py -3.12 -m venv .venv
+#   .\.venv\Scripts\Activate.ps1
+#   python -m pip install -r requirements.txt
+#
+# Python 3.12 is required: mediapipe ships no wheels for 3.13+.
+# The torch build carries a +cu132 local tag, which only resolves from
+# PyTorch's own index - hence the extra-index-url below. Without that line
+# pip silently falls back to the CPU-only wheel from PyPI.
+
+--extra-index-url https://download.pytorch.org/whl/cu132
+
+torch==2.13.0+cu132
+torchvision==0.28.0+cu132
+ultralytics==8.4.127
+mediapipe==1.0.1
+numpy==2.5.2
+
+# Note: opencv-python and opencv-contrib-python both end up installed -
+# ultralytics depends on the former, mediapipe on the latter. Same version,
+# contrib is a superset, and they coexist fine. Not worth fighting.
+
+pynput==1.8.2   # keyboard/mouse timing for the os_* features - timing only, never key content
+scikit-learn==1.9.1   # fusion model + evaluation
+pandas==3.0.6   # time-windowed rolling features, training tables
