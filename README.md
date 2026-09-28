@@ -47,13 +47,29 @@ Also useful:
 
 ## Run
 
+Double-click the No Phones icon on your desktop, or `No Phones.bat`, or:
+
 ```
 python src/monitor.py
 ```
 
-- `q` quits, `f` marks the last alert as a false alarm
-- `--headless` runs without a window
+- `q` quits
+- `f` marks the last alert as a false alarm
+- `m` marks a miss: press it with your other hand while you're on your phone and the bar isn't moving
+- `--headless` runs without a window (no `f` or `m`)
 - `--no-sound` / `--no-flash` turn off either alert
+
+To create the desktop icon (once):
+
+```
+powershell -ExecutionPolicy Bypass -File make_shortcut.ps1
+```
+
+To see how it's doing in real use, from your `f` and `m` presses:
+
+```
+python src/report.py
+```
 
 ## Results
 
@@ -67,6 +83,6 @@ Full tables are in `results/metrics.md` and `results/alerts.md`.
 
 ## Privacy
 
-- Monitoring saves only `data/focus_log.csv` (alert times).
+- Monitoring saves `data/focus_log.csv` (alert times). Pressing `f` or `m` also saves the last few seconds of features (numbers, no images) to `data/feedback/`.
 - Recording saves features and a few snapshot images to `data/sessions/`. Keep that folder private.
 - The keyboard listener counts key presses and never records which key.

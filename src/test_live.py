@@ -132,19 +132,27 @@ def test_alerts():
 
 
 def test_monitor():
-    """The whole per-frame path - extractor, live scoring, alert logic, log -
-    driven by synthetic frames. No camera, no sound, no flash window."""
+    """The whole per-frame path - extractor, live scoring, alert logic, log,
+    feedback, report - driven by synthetic frames. No camera, no sound, no
+    flash window, and nothing written to the real data/ folder."""
     print("\nmonitor, end to end (synthetic frames, no camera)")
     import csv
     import json
     import tempfile
-    from monitor import Monitor
+    from features import FEATURE_NAMES
+    from monitor import FocusLog, Monitor
+    from record import META_COLUMNS
+    from report import summarize
 
     bundle = joblib.load("models/fusion.joblib")
     cfg = json.loads(Path("models/alert_config.json").read_text(encoding="utf-8"))
     with tempfile.TemporaryDirectory() as tmp:
-        log_path = Path(tmp) / "log.csv"
-        mon = Monitor(bundle, cfg, sound=False, flash=False, log_path=log_path)
+        log_path, fb_dir = Path(tmp) / "log.csv", Path(tmp) / "feedback"
+        # use_os=False: with the real keyboard listener on, whoever happens to be
+        # typing while the test runs vetoes its alerts - which is exactly what
+        # happened the first time this test ran.
+        mon = Monitor(bundle, cfg, sound=False, flash=False, log_path=log_path,
+                      feedback_dir=fb_dir, use_os=False)
         frame = np.zeros((480, 640, 3), np.uint8)
 
         t, dt, times = 0.0, 0.04, []
@@ -158,37 +166,70 @@ def test_monitor():
         check("blank desk scores low", p < 0.5, f"score {p:.2f}")
 
         real_score = mon.live.score
-        mon.live.score = lambda feats, t: 0.95         # pretend: on the phone
-        alert_at = None
-        for _ in range(int(20 / dt)):
-            _, _, ev = mon.step(frame, t)
-            if ev and ev[0] == "alert" and alert_at is None:
-                alert_at = t
-            t += dt
-        check("alerts when on the phone", alert_at is not None,
-              f"after {alert_at - 1.0:.1f}s of phone" if alert_at else "no alert")
 
-        mon.live.score = lambda feats, t: 0.05         # pretend: phone down
-        cleared = False
-        for _ in range(int(15 / dt)):
-            _, _, ev = mon.step(frame, t)
-            cleared = cleared or bool(ev and ev[0] == "clear")
-            t += dt
-        check("clears when the phone goes down", cleared)
+        def run(score, seconds):
+            """Pretend the model scores every frame `score` for `seconds`."""
+            nonlocal t
+            mon.live.score = lambda feats, t_: score
+            events = []
+            for _ in range(int(seconds / dt)):
+                _, _, ev = mon.step(frame, t)
+                if ev:
+                    events.append((t, ev))
+                t += dt
+            return events
 
-        mon.live.score = lambda feats, t: 0.95
-        for _ in range(int(10 / dt)):
-            mon.step(frame, t)
-            t += dt
-        mon.mark_false(t)
+        mon.log.write("session_start")
+        ev = run(0.95, 20)                             # on the phone
+        first = next((et for et, e in ev if e[0] == "alert"), None)
+        check("alerts when on the phone", first is not None,
+              f"after {first - 1.0:.1f}s of phone" if first else "no alert")
+        ev = run(0.05, 15)                             # phone down
+        check("clears when the phone goes down", any(e[0] == "clear" for _, e in ev))
+
+        run(0.95, 10)                                  # a second alert...
+        mon.mark_false(t)                              # ...that was wrong
         check("f resets the alert state", mon.sm.state == "focused")
+        run(0.05, 3)
+        mon.mark_missed(t)                             # and one it missed
         mon.live.score = real_score
         mon.close(t)
+        mon.log.write("session_end", seconds=t)
         mon.log.close()
 
         events = [r["event"] for r in csv.DictReader(open(log_path, encoding="utf-8"))]
-        check("log records alert, episode and false alarm",
-              {"alert", "episode", "false_alarm"} <= set(events), f"{events}")
+        check("log records alert, episode, false alarm and miss",
+              {"alert", "episode", "false_alarm", "missed"} <= set(events), f"{events}")
+
+        rows = [r for f in fb_dir.glob("feedback_*.csv")
+                for r in csv.DictReader(open(f, encoding="utf-8"))]
+        n_false = sum(r["scenario"] == "false_alarm" for r in rows)
+        n_missed = sum(r["scenario"] == "missed" for r in rows)
+        labels_ok = all(r["label"] == ("0" if r["scenario"] == "false_alarm" else "1") for r in rows)
+        check("f and m save labelled frames in the session format",
+              bool(rows) and list(rows[0].keys()) == META_COLUMNS + FEATURE_NAMES
+              and labels_ok and n_false > 0 and n_missed > 0,
+              f"{n_false} false-alarm frames (label 0), {n_missed} missed frames (label 1)")
+
+        s = summarize(log_path)["total"]
+        check("report counts it right", (s["alerts"], s["false"], s["missed"]) == (2, 1, 1),
+              f"alerts {s['alerts']}, false {s['false']}, missed {s['missed']}")
+
+        from monitor import FLASH_SECONDS, Flasher
+        fl = Flasher(True)
+        fl.fire(10.0, 1)                               # pattern only - no window is opened
+        up = fl.pattern == [(10.0, 10.0 + FLASH_SECONDS)]
+        fl.dismiss()
+        check(f"alert screen stays up {FLASH_SECONDS:.0f} s, f dismisses it",
+              up and fl.pattern == [])
+
+        old = Path(tmp) / "old_log.csv"
+        old.write_text("time,event,level,seconds,note\n"
+                       "2026-09-27T09:49:54,session_start,,,x\n", encoding="utf-8")
+        FocusLog(old).close()
+        upgraded = list(csv.DictReader(open(old, encoding="utf-8")))
+        check("an old log is upgraded without losing rows",
+              list(upgraded[0].keys()) == FocusLog.FIELDS and upgraded[0]["event"] == "session_start")
 
 
 if __name__ == "__main__":
