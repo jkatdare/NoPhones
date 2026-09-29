@@ -131,6 +131,58 @@ def test_alerts():
           f"credited {sm.high_secs:.2f}s")
 
 
+def test_protocol():
+    """Protocol v4: the new scenarios, the glance cue, loading older sessions,
+    and glances being scored as 'must not alert'."""
+    print("\nprotocol v4")
+    import protocol
+    import tune_alerts as ta
+
+    check("every scenario has a label, an alert rule and an instruction",
+          all(s in protocol.LABELS and s in protocol.ALERT_EXPECTED and s in protocol.INSTRUCTIONS
+              for s in protocol.PROTOCOL))
+    check("drink and glance must not alert, phone_high must, glance is never trained on",
+          not protocol.ALERT_EXPECTED["drink"] and not protocol.ALERT_EXPECTED["glance"]
+          and protocol.ALERT_EXPECTED["phone_high"] and protocol.LABELS["glance"] == -1)
+
+    ts = np.arange(0, 40, 0.05)
+    on = np.array([protocol.glance_cued(t) for t in ts])
+    starts = ts[1:][on[1:] & ~on[:-1]]
+    check("two 3 s glance cues in a 40 s recording",
+          len(starts) == 2 and abs(on.sum() * 0.05 - 6) < 0.2,
+          f"cues at {np.round(starts, 1).tolist()} s")
+
+    # Two glances inside one alert window add their evidence together, and the
+    # test would measure how often you glance instead of how long. The gap
+    # between cues must beat the longest window tuning can choose.
+    longest = max(c["window"] for c in ta.VOTE_GRID + ta.trigger_family(5) + ta.trigger_family(7))
+    gap = protocol.GLANCE_EVERY - protocol.GLANCE_FOR
+    check("no alert window can hold two glances", gap > longest,
+          f"{gap:.0f} s between glances vs longest window {longest:.0f} s")
+
+    typed = [s for s in ("glance", "drink") if "keyboard" not in protocol.INSTRUCTIONS[s]]
+    check("glance and drink say hands off the keyboard (typing vetoes the test)", not typed,
+          f"missing: {typed}" if typed else "")
+
+    df = fusion.load_sessions(verbose=False)
+    per = df.groupby("session")["scenario"].apply(set)
+    old = [s for s, sc in per.items() if not ({"drink", "glance", "phone_high"} & sc)]
+    check("sessions recorded before v4 still load", len(old) >= 1, f"{len(old)} pre-v4 sessions")
+
+    oof = pd.read_csv("results/oof.csv")
+    s0 = sorted(oof["session"].unique())[0]
+    one = oof[oof["session"] == s0].merge(df[["session", "t_elapsed", "os_keys_5s"]],
+                                          on=["session", "t_elapsed"])
+    cfg = [dict(window=6, on=5 / 6, off=5 / 12, smooth=2.0)]
+    base = ta.aggregate(ta.evaluate(one, "vote", cfg, ta.run_vote), 0, [s0])
+    moved = one.copy()
+    moved.loc[moved["scenario"] == "phone_hand", "scenario"] = "glance"
+    after = ta.aggregate(ta.evaluate(moved, "vote", cfg, ta.run_vote), 0, [s0])
+    check("an alert during a glance counts as a false alert",
+          after["n_phone"] == base["n_phone"] - 1 and after["fa"] > base["fa"],
+          f"false alerts {base['fa']} -> {after['fa']} with phone_hand relabelled as glance")
+
+
 def test_monitor():
     """The whole per-frame path - extractor, live scoring, alert logic, log,
     feedback, report - driven by synthetic frames. No camera, no sound, no
@@ -235,6 +287,7 @@ def test_monitor():
 if __name__ == "__main__":
     test_alerts()
     test_skew()
+    test_protocol()
     test_monitor()
     print()
     if FAILED:

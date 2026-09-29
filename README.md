@@ -26,7 +26,7 @@ The YOLO weights download automatically on first run.
 
 The model learns one person, one desk and one camera angle. Fix the camera in place first and don't move it.
 
-1. Record at least 4 sessions on different days, with a new seed each time (about 6 minutes each):
+1. Record at least 4 sessions on different days, with a new seed each time (about 8 minutes each, 10 scenarios including drinking and glancing at your phone):
    ```
    python src/record.py --seed 1
    ```
@@ -73,11 +73,15 @@ python src/report.py
 
 ## Results
 
-Measured on sessions the model never trained on (4 sessions, about 30,000 frames):
+Measured on sessions the model never trained on (8 sessions, about 62,000 frames):
 
-- YOLO confidence alone: AUC 0.79
-- YOLO + hands model: AUC 0.97
-- Alerts at 5 seconds: 12 of 12 phone episodes caught, median 5 s, 1 false alarm in 11 minutes of work
+- YOLO confidence alone: AUC 0.76
+- YOLO + hands model: AUC 0.94
+- Alerts at 5 seconds: 25 of 28 phone episodes caught, median 5 s
+- False alarms: 10 in 27 minutes of test recordings, mostly while drinking. The tests sip every few seconds, far more than real life. Real use so far: 0 in 25 minutes.
+- A 7 second trigger halves the false alarms and catches one fewer episode
+
+Known limits: a phone held fully out of view can't be seen, and a hand raised with a drink looks like a hand raised with a phone.
 
 Full tables are in `results/metrics.md` and `results/alerts.md`.
 

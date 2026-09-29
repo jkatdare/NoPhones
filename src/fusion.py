@@ -110,6 +110,13 @@ def load_sessions(folder="data/sessions", verbose=True):
     Skips (loudly) anything with the wrong schema or a missing / thin
     scenario - a partial session as a test fold would quietly skew every
     number, which is exactly what the 241-row seed 3 would have done.
+
+    The seven CORE scenarios are required; the ones added in v4 are optional,
+    so sessions recorded before them still load. Whatever IS present must not
+    be thin - that means the recording went wrong.
+
+    Returns every protocol frame, INCLUDING test-only ones (label -1, e.g.
+    glance). Train on label 0/1 only; the rest are there to be scored.
     """
     frames = []
     for p in sorted(Path(folder).glob("session_*.csv")):
@@ -120,17 +127,20 @@ def load_sessions(folder="data/sessions", verbose=True):
                 print(f"  skip {p.name}: old schema, {len(missing)} feature columns missing")
             continue
         counts = df["scenario"].value_counts()
-        thin = [s for s in protocol.PROTOCOL if counts.get(s, 0) < MIN_FRAMES_PER_SCENARIO]
-        if thin:
+        absent = [s for s in protocol.CORE if counts.get(s, 0) < MIN_FRAMES_PER_SCENARIO]
+        thin = [s for s in counts.index
+                if s in protocol.PROTOCOL and counts[s] < MIN_FRAMES_PER_SCENARIO]
+        bad = sorted(set(absent) | set(thin))
+        if bad:
             if verbose:
-                print(f"  skip {p.name}: incomplete - {', '.join(thin)} "
+                print(f"  skip {p.name}: incomplete - {', '.join(bad)} "
                       f"under {MIN_FRAMES_PER_SCENARIO} frames")
             continue
         frames.append(df)
     if not frames:
         raise SystemExit("No complete sessions in data/sessions.")
     df = pd.concat(frames, ignore_index=True)
-    df = df[df["label"].isin([0, 1])].reset_index(drop=True)
+    df = df[df["scenario"].isin(protocol.PROTOCOL)].reset_index(drop=True)
     return df
 
 

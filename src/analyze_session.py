@@ -73,8 +73,11 @@ def check(path):
                             "is the listener hooking?")
         if s == "phone_hand" and phone < 0.3:
             warnings.append(f"phone_hand: YOLO saw the phone in only {phone:.0%} of frames")
-        if s.startswith("work") and phone > 0.3:
+        if (s.startswith("work") or s == "drink") and phone > 0.3:
             warnings.append(f"{s}: YOLO fired in {phone:.0%} of frames - was the phone out of sight?")
+        if s in ("glance", "drink") and keys > 0.2:
+            warnings.append(f"{s}: typing in {keys:.0%} of frames - the typing veto hides this "
+                            f"alert test. Re-record with hands off the keyboard.")
 
     print()
     print("  KEY FEATURE MEANS PER SCENARIO")
@@ -141,7 +144,9 @@ def confusability(path):
     rows, feats, scen, label, t, d = load(path)
     if "b_n_hands" not in d:
         return
-    order = [s for s in PROTOCOL if s in set(scen)]
+    # Test-only scenarios (label -1, e.g. glance) are never trained on, so they
+    # have no side of the label boundary to be separable from.
+    order = [s for s in PROTOCOL if s in set(scen) and LABELS[s] in (0, 1)]
     feats = [f for f in feats if f not in ("a_ms", "b_ms")]
 
     pairs = []

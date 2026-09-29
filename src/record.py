@@ -115,7 +115,7 @@ def main():
             if (phase, scenario) != announced:
                 announced = (phase, scenario)
                 if phase == "lead":
-                    print(f"\n>>> next: {scenario} [{protocol.LABELS[scenario]}] - "
+                    print(f"\n>>> next: {scenario} [{protocol.LABEL_WORDS[protocol.LABELS[scenario]]}] - "
                           f"{protocol.INSTRUCTIONS[scenario]}")
                 else:
                     print(f"    recording {scenario} for {args.seconds:.0f}s")
@@ -146,7 +146,7 @@ def main():
                 snapped.add(scenario)
             if not args.no_mirror:
                 frame = cv2.flip(frame, 1)
-            protocol.draw_overlay(frame, phase, scenario, remaining)
+            protocol.draw_overlay(frame, phase, scenario, remaining, seconds=args.seconds)
             h = frame.shape[0]
             cv2.putText(frame,
                         f"{fps:.0f} fps | A {feats['a_ms']:.0f}ms B {feats['b_ms']:.0f}ms | "

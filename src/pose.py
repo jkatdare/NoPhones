@@ -300,7 +300,7 @@ def main():
             draw_skeleton(frame, pose_res)
             draw_panel(frame, feats)
             if args.protocol:
-                protocol.draw_overlay(frame, phase, scenario, remaining)
+                protocol.draw_overlay(frame, phase, scenario, remaining, seconds=args.seconds)
 
             frame_idx += 1
             frames_since += 1

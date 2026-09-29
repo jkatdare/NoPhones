@@ -92,12 +92,19 @@ def smooth(df, col, window=SMOOTH_WINDOW):
 
 
 def loso(X, cols, sessions):
-    """Out-of-fold P(distracted) for every frame, plus the per-fold models."""
+    """Out-of-fold P(distracted) for every frame, plus the per-fold models.
+
+    Fits only on labelled frames (0/1) from the other sessions, but scores
+    EVERY frame of the held-out session - test-only recordings like `glance`
+    included - so tune_alerts can check the alert rule on them.
+    """
+    labelled = X["label"].isin([0, 1])
     p = np.full(len(X), np.nan)
     models = {}
     for s in sessions:
         test = X["session"] == s
-        m = make_model().fit(X.loc[~test, cols], X.loc[~test, "label"])
+        fit = ~test & labelled
+        m = make_model().fit(X.loc[fit, cols], X.loc[fit, "label"])
         p[test.to_numpy()] = m.predict_proba(X.loc[test, cols])[:, 1]
         models[s] = m
     return p, models
@@ -114,6 +121,8 @@ def scenario_accuracy(X, pred_col):
     out = {}
     for s in protocol.PROTOCOL:
         m = X["scenario"] == s
+        if protocol.LABELS[s] not in (0, 1) or not m.any():   # test-only, or not recorded yet
+            continue
         out[s] = float((X.loc[m, pred_col] == X.loc[m, "label"]).mean())
     return out
 
@@ -128,7 +137,7 @@ def grouped_permutation_importance(X, cols, models, sessions, rng):
     bases = [c for c in cols if not c.endswith("_r1s")]
     drops = {b: [] for b in bases}
     for s in sessions:
-        test = X["session"] == s
+        test = (X["session"] == s) & X["label"].isin([0, 1])
         Xt, yt = X.loc[test, cols].copy(), X.loc[test, "label"].to_numpy()
         base_auc = roc_auc_score(yt, models[s].predict_proba(Xt)[:, 1])
         for b in bases:
@@ -156,8 +165,11 @@ def main():
     raw = fusion.load_sessions()
     X = fusion.prepare(raw)
     sessions = sorted(X["session"].unique())
+    lab = X["label"].isin([0, 1])           # trained and scored on; the rest are test-only
     n_pos, n_neg = int((X.label == 1).sum()), int((X.label == 0).sum())
-    print(f"  {len(X)} frames, {len(sessions)} sessions, {n_pos} distracted / {n_neg} not")
+    n_test = int((~lab).sum())
+    print(f"  {len(X)} frames, {len(sessions)} sessions, {n_pos} distracted / {n_neg} not"
+          + (f" / {n_test} test-only (e.g. glance)" if n_test else ""))
     for s in sessions:
         print(f"    {s}  {int((X.session == s).sum())} frames")
     if len(sessions) < 3:
@@ -176,14 +188,15 @@ def main():
         key = "p_" + name.split()[0]
         X[key], models = loso(X, cols, sessions)
         X[key + "_s"] = smooth(X, key)
-        folds = per_fold_auc(X, key, sessions)
+        XL = X[lab]
+        folds = per_fold_auc(XL, key, sessions)
         summary[name] = {
             "n_features": len(cols),
-            "auc": float(roc_auc_score(X.label, X[key])),
+            "auc": float(roc_auc_score(XL.label, XL[key])),
             "auc_worst_session": float(min(folds.values())),
             "auc_by_session": {k: float(v) for k, v in folds.items()},
-            "bal_acc": float(balanced_accuracy_score(X.label, X[key] >= THRESHOLD)),
-            "bal_acc_smoothed": float(balanced_accuracy_score(X.label, X[key + "_s"] >= THRESHOLD)),
+            "bal_acc": float(balanced_accuracy_score(XL.label, XL[key] >= THRESHOLD)),
+            "bal_acc_smoothed": float(balanced_accuracy_score(XL.label, XL[key + "_s"] >= THRESHOLD)),
             "key": key,
         }
         if name == SHIP:
@@ -191,11 +204,12 @@ def main():
         print(f"  {name:<18} AUC {summary[name]['auc']:.3f}   "
               f"worst session {summary[name]['auc_worst_session']:.3f}")
 
-    rule_folds = per_fold_auc(X, "p_rule", sessions)
+    XL = X[lab]
+    rule_folds = per_fold_auc(XL, "p_rule", sessions)
     rule = {
-        "auc": float(roc_auc_score(X.label, X["p_rule"])),
+        "auc": float(roc_auc_score(XL.label, XL["p_rule"])),
         "auc_worst_session": float(min(rule_folds.values())),
-        "bal_acc": float(balanced_accuracy_score(X.label, X["pred_rule"])),
+        "bal_acc": float(balanced_accuracy_score(XL.label, XL["pred_rule"])),
     }
 
     # ---- per-scenario accuracy ---------------------------------------------
@@ -216,7 +230,7 @@ def main():
 
     # ---- final model on ALL sessions -----------------------------------------
     ship_cols = fusion.columns_for(SUBSETS[SHIP])
-    final = make_model().fit(X[ship_cols], X["label"])
+    final = make_model().fit(X.loc[lab, ship_cols], X.loc[lab, "label"])
     bundle = {
         "model": final,
         "feature_set": SHIP,
@@ -236,7 +250,7 @@ def main():
     lines = []
     lines.append("# Results\n")
     lines.append(f"Leave-one-session-out across **{len(sessions)} sessions**, "
-                 f"{len(X):,} frames ({n_pos:,} distracted, {n_neg:,} not). "
+                 f"{n_pos + n_neg:,} labelled frames ({n_pos:,} distracted, {n_neg:,} not). "
                  f"Each number is measured on a session the model never saw in training.\n")
     lines.append("## Headline\n")
     lines.append("| model | features | ROC AUC | worst session | balanced acc | balanced acc, 2 s smoothed |")
@@ -253,7 +267,7 @@ def main():
     head = "| scenario | truth | " + " | ".join(by_scenario) + " |"
     lines.append(head)
     lines.append("|---|---|" + "---|" * len(by_scenario))
-    for s in protocol.PROTOCOL:
+    for s in by_scenario["naive rule"]:      # labelled scenarios that were recorded
         truth = "phone" if protocol.LABELS[s] == 1 else "working"
         lines.append(f"| {s} | {truth} | " + " | ".join(pct(by_scenario[c][s]) for c in by_scenario) + " |")
     lines.append("")

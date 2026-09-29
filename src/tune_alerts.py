@@ -116,7 +116,7 @@ def evaluate(df, family, grid, runner):
             r = per.setdefault(sess, {"fa": 0, "work_s": 0.0, "margin": np.inf,
                                       "caught": 0, "n_phone": 0, "lat": []})
             alerts, first, peak, trigger = runner(g, cfg)
-            if protocol.LABELS[scen] == 0:
+            if not protocol.ALERT_EXPECTED[scen]:     # working, drinking, glancing
                 r["fa"] += alerts
                 r["work_s"] += g["t_elapsed"].iloc[-1] - g["t_elapsed"].iloc[0]
                 r["margin"] = min(r["margin"], trigger - peak)
@@ -145,6 +145,25 @@ def choose(res, grid, sessions):
         a = aggregate(res, ci, sessions)
         return (a["fa"], int(a["margin"] < MARGIN_SECS), a["n_phone"] - a["caught"], a["median_lat"])
     return min(range(len(grid)), key=key)
+
+
+def by_recording(df, runner, grid, nested_rows):
+    """Held-out outcome per recording type: each session scored with the
+    settings chosen on the OTHER sessions - so glance and drink get an honest
+    number of their own instead of disappearing into the total."""
+    out = {}
+    for r in nested_rows:
+        cfg = grid[r["cfg"]]
+        for _, scen, g in segments(df[df["session"] == r["session"]]):
+            alerts, first, _, _ = runner(g, cfg)
+            o = out.setdefault(scen, {"n": 0, "alerts": 0, "alerted": 0, "lat": []})
+            o["n"] += 1
+            o["alerts"] += alerts
+            if alerts:
+                o["alerted"] += 1
+                if first is not None:
+                    o["lat"].append(first)
+    return out
 
 
 def describe(family, cfg):
@@ -213,15 +232,30 @@ def main():
     L = ["# Alerts\n",
          "Every number here is from sessions the model never trained on, with alert settings "
          "chosen **without** looking at the session being scored (nested leave-one-session-out). "
-         "Each 40 s recording counts once: an alert during a working recording is a false alert; "
-         "a phone recording is caught if it raises at least one alert.\n",
+         "Each 40 s recording counts once: an alert during a recording that should not alert "
+         "(working, drinking, glancing) is a false alert; a phone recording is caught if it "
+         "raises at least one alert.\n",
          "## Hold rule vs vote, held out\n",
-         "| rule | false alerts | per hour of work | phone recordings caught | median latency | slowest |",
+         "| rule | false alerts | per hour (working, drinking, glancing) | phone recordings caught | median latency | slowest |",
          "|---|---|---|---|---|---|"]
     for fam, label in (("hold", "hold for N seconds"), ("vote", "vote with hysteresis")):
         t = tot[fam]
         L.append(f"| {label} | {t['fa']} in {t['work_min']:.0f} min | {t['fa_per_hr']:.1f} | "
                  f"{t['caught']}/{t['n_phone']} | {t['median_lat']:.0f} s | {t['max_lat']:.0f} s |")
+    rec = by_recording(df, run_vote, vote_grid, nested["vote"])
+    L += ["", "## By recording type, held out (vote)\n",
+          "| recording | should alert | recordings | result |",
+          "|---|---|---|---|"]
+    for scen in protocol.PROTOCOL:
+        if scen not in rec:
+            continue
+        o = rec[scen]
+        if protocol.ALERT_EXPECTED[scen]:
+            med = f", median {np.median(o['lat']):.0f} s" if o["lat"] else ""
+            result = f"{o['alerted']}/{o['n']} caught{med}"
+        else:
+            result = f"{o['alerts']} false alert{'' if o['alerts'] == 1 else 's'}"
+        L.append(f"| {scen} | {'yes' if protocol.ALERT_EXPECTED[scen] else 'no'} | {o['n']} | {result} |")
     L += ["", "## Per held-out session\n",
           "| held out | rule | settings chosen on the others | false alerts | caught | latencies |",
           "|---|---|---|---|---|---|"]
